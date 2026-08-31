@@ -1,0 +1,6 @@
+{
+  "name": "Ежедневник и Заметки",
+  "description": "Ежедневник с записной книжкой, расписанием задач и быстрым голосовым вводом.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
