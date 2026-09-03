@@ -12,6 +12,9 @@ import com.example.data.repository.PlannerRepository
 import com.example.util.DateUtils
 import com.example.voice.ParsedVoiceResult
 import com.example.voice.SmartVoiceParser
+import com.example.voice.VoiceCommand
+import com.example.voice.VoiceCommandDetection
+import com.example.voice.VoiceCommandParser
 import com.example.voice.VoiceInputManager
 import com.example.voice.VoiceState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,7 +22,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,6 +45,9 @@ data class PlannerUiState(
     val selectedNotesCategory: String = "Все",
     val isVoiceSheetVisible: Boolean = false,
     val voiceParsedResult: ParsedVoiceResult? = null,
+    val voiceDetectedCommand: VoiceCommandDetection? = null,
+    val autoExecuteVoiceCommands: Boolean = true,
+    val isVoiceHelpDialogVisible: Boolean = false,
     val isTaskDialogVisible: Boolean = false,
     val editingTask: DailyTask? = null,
     val isNoteDialogVisible: Boolean = false,
@@ -101,10 +106,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             voiceInputManager.voiceState.collect { state ->
                 if (state is VoiceState.Success) {
-                    val parsed = SmartVoiceParser.parse(state.recognizedText)
-                    _uiState.value = _uiState.value.copy(
-                        voiceParsedResult = parsed
-                    )
+                    processRecognizedVoice(state.recognizedText, isFromDirectSpeech = true)
                 }
             }
         }
@@ -163,7 +165,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
             )
             if (id == 0L) {
                 repository.insertTask(task)
-                showSnackbar("Задача успешно добавлена")
+                showSnackbar("Задача добавлена в Ежедневник")
             } else {
                 repository.updateTask(task)
                 showSnackbar("Задача обновлена")
@@ -228,7 +230,8 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         voiceInputManager.reset()
         _uiState.value = _uiState.value.copy(
             isVoiceSheetVisible = true,
-            voiceParsedResult = null
+            voiceParsedResult = null,
+            voiceDetectedCommand = null
         )
         voiceInputManager.startListening()
     }
@@ -237,23 +240,161 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         voiceInputManager.reset()
         _uiState.value = _uiState.value.copy(
             isVoiceSheetVisible = false,
-            voiceParsedResult = null
+            voiceParsedResult = null,
+            voiceDetectedCommand = null
         )
     }
 
+    fun toggleAutoExecuteVoiceCommands() {
+        val current = _uiState.value.autoExecuteVoiceCommands
+        _uiState.value = _uiState.value.copy(autoExecuteVoiceCommands = !current)
+        showSnackbar(
+            if (!current) "Автовыполнение голосовых команд включено"
+            else "Автовыполнение голосовых команд выключено"
+        )
+    }
+
+    fun openVoiceHelpDialog() {
+        _uiState.value = _uiState.value.copy(isVoiceHelpDialogVisible = true)
+    }
+
+    fun closeVoiceHelpDialog() {
+        _uiState.value = _uiState.value.copy(isVoiceHelpDialogVisible = false)
+    }
+
     fun updateVoiceSheetText(text: String) {
-        if (text.isBlank()) {
-            _uiState.value = _uiState.value.copy(voiceParsedResult = null)
-        } else {
-            val parsed = SmartVoiceParser.parse(text)
-            _uiState.value = _uiState.value.copy(voiceParsedResult = parsed)
+        processRecognizedVoice(text, isFromDirectSpeech = false)
+    }
+
+    /**
+     * Core processing for voice input (from either in-app SpeechRecognizer or Google system dialog)
+     */
+    fun processRecognizedVoice(text: String, isFromDirectSpeech: Boolean) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                voiceParsedResult = null,
+                voiceDetectedCommand = null
+            )
+            return
+        }
+
+        // 1. Detect if this matches a voice control command
+        val detected = VoiceCommandParser.detectCommand(trimmed)
+        val parsed = SmartVoiceParser.parse(trimmed)
+
+        _uiState.value = _uiState.value.copy(
+            voiceDetectedCommand = detected,
+            voiceParsedResult = parsed
+        )
+
+        // 2. If it's a spoken command and auto-execution is enabled, execute right away!
+        if (isFromDirectSpeech && detected != null && _uiState.value.autoExecuteVoiceCommands) {
+            executeVoiceCommand(detected.command)
+            closeVoiceSheet()
+        }
+    }
+
+    fun executeDetectedCommand() {
+        _uiState.value.voiceDetectedCommand?.let { detection ->
+            executeVoiceCommand(detection.command)
+            closeVoiceSheet()
+        }
+    }
+
+    fun executeVoiceCommand(command: VoiceCommand) {
+        when (command) {
+            is VoiceCommand.SwitchTab -> {
+                setTab(command.tab)
+                showSnackbar("⚡ Команда: открыт раздел ${command.tab.titleRu}")
+            }
+            is VoiceCommand.SelectDate -> {
+                selectDate(command.epochDay)
+                setTab(MainTab.PLANNER)
+                showSnackbar("⚡ Команда: открыта дата ${command.label}")
+            }
+            is VoiceCommand.NextDay -> {
+                val next = _selectedEpochDay.value + 1
+                selectDate(next)
+                setTab(MainTab.PLANNER)
+                showSnackbar("⚡ Команда: следующий день (${DateUtils.getRelativeDayLabel(next)})")
+            }
+            is VoiceCommand.PreviousDay -> {
+                val prev = _selectedEpochDay.value - 1
+                selectDate(prev)
+                setTab(MainTab.PLANNER)
+                showSnackbar("⚡ Команда: предыдущий день (${DateUtils.getRelativeDayLabel(prev)})")
+            }
+            is VoiceCommand.SetFilter -> {
+                setTaskFilter(command.filter)
+                setTab(MainTab.PLANNER)
+                showSnackbar("⚡ Команда: фильтр «${command.filter.titleRu}»")
+            }
+            is VoiceCommand.SearchNotes -> {
+                setTab(MainTab.NOTEBOOK)
+                setNotesSearchQuery(command.query)
+                showSnackbar("⚡ Команда: поиск заметок «${command.query}»")
+            }
+            is VoiceCommand.ClearNotesSearch -> {
+                setTab(MainTab.NOTEBOOK)
+                setNotesSearchQuery("")
+                showSnackbar("⚡ Команда: поиск очищен")
+            }
+            is VoiceCommand.CompleteTask -> {
+                val target = currentDayTasks.value.firstOrNull {
+                    it.title.contains(command.query, ignoreCase = true)
+                }
+                if (target != null) {
+                    toggleTask(target)
+                    showSnackbar("⚡ Выполнено: «${target.title}»")
+                } else {
+                    showSnackbar("Задача по запросу «${command.query}» на текущую дату не найдена")
+                }
+            }
+            is VoiceCommand.DeleteTask -> {
+                val target = currentDayTasks.value.firstOrNull {
+                    it.title.contains(command.query, ignoreCase = true)
+                }
+                if (target != null) {
+                    deleteTask(target)
+                    showSnackbar("⚡ Удалено: «${target.title}»")
+                } else {
+                    showSnackbar("Задача «${command.query}» не найдена")
+                }
+            }
+            is VoiceCommand.CreateTaskDirectly -> {
+                saveTask(
+                    title = command.parsed.cleanedTitle,
+                    description = command.parsed.description,
+                    dateEpochDay = command.parsed.suggestedEpochDay,
+                    timeString = command.parsed.suggestedTimeString,
+                    priority = command.parsed.suggestedPriority,
+                    category = command.parsed.suggestedCategory
+                )
+                selectDate(command.parsed.suggestedEpochDay)
+                setTab(MainTab.PLANNER)
+                showSnackbar("⚡ Задача добавлена на ${DateUtils.getRelativeDayLabel(command.parsed.suggestedEpochDay)}")
+            }
+            is VoiceCommand.CreateNoteDirectly -> {
+                saveNote(
+                    title = command.title,
+                    content = command.content,
+                    colorIndex = 1,
+                    category = "Голосовая",
+                    isPinned = false
+                )
+                setTab(MainTab.NOTEBOOK)
+                showSnackbar("⚡ Заметка добавлена в записную книжку")
+            }
+            is VoiceCommand.ShowHelp -> {
+                openVoiceHelpDialog()
+            }
         }
     }
 
     fun quickAddTaskFromText(text: String, fallbackEpochDay: Long = _selectedEpochDay.value) {
         if (text.isBlank()) return
         val parsed = SmartVoiceParser.parse(text)
-        // If user didn't mention specific relative date (like 'завтра' / 'сегодня'), use currently selected date
         val finalEpochDay = if (text.contains("завтра", ignoreCase = true) ||
             text.contains("послезавтра", ignoreCase = true) ||
             text.contains("сегодня", ignoreCase = true) ||

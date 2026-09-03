@@ -13,6 +13,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,21 +28,29 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.EventAvailable
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +59,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SheetState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,7 +75,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -72,9 +84,10 @@ import androidx.compose.ui.unit.sp
 import com.example.util.DateUtils
 import com.example.voice.ParsedVoiceResult
 import com.example.voice.SmartVoiceParser
+import com.example.voice.VoiceCommandDetection
 import com.example.voice.VoiceState
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun VoiceRecognitionSheet(
     sheetState: SheetState,
@@ -82,18 +95,23 @@ fun VoiceRecognitionSheet(
     partialText: String,
     rmsDb: Float,
     parsedResult: ParsedVoiceResult?,
+    detectedCommand: VoiceCommandDetection?,
+    autoExecuteCommands: Boolean,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
+    onLaunchSystemSpeech: () -> Unit,
+    onOpenHelp: () -> Unit,
+    onToggleAutoExecute: () -> Unit,
+    onExecuteCommand: () -> Unit,
     onTextChanged: (String) -> Unit,
     onApplyAsTask: (ParsedVoiceResult) -> Unit,
     onApplyAsNote: (ParsedVoiceResult) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedInputTab by remember { mutableIntStateOf(0) } // 0 = Voice, 1 = Keyboard Text
+    var selectedInputTab by remember { mutableIntStateOf(0) } // 0 = Voice, 1 = Text
     var manualInputText by remember { mutableStateOf(parsedResult?.rawText ?: "") }
 
-    // Sync recognized voice text into the editable manual input text
     LaunchedEffect(parsedResult) {
         if (parsedResult != null && parsedResult.rawText.isNotBlank()) {
             manualInputText = parsedResult.rawText
@@ -109,10 +127,44 @@ fun VoiceRecognitionSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 20.dp, vertical = 4.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Header Row: Title and Help Icon
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Голосовой ввод и команды",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Диктовка задач или голосовое управление",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                IconButton(
+                    onClick = onOpenHelp,
+                    modifier = Modifier.testTag("voice_help_icon_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HelpOutline,
+                        contentDescription = "Справка по командам",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             // Mode Tabs: Voice & Text
             PrimaryTabRow(
                 selectedTabIndex = selectedInputTab,
@@ -128,7 +180,7 @@ fun VoiceRecognitionSheet(
                         onStartListening()
                     },
                     icon = { Icon(imageVector = Icons.Default.Mic, contentDescription = null) },
-                    text = { Text("Голосовой ввод", fontWeight = FontWeight.SemiBold) },
+                    text = { Text("Голос", fontWeight = FontWeight.SemiBold) },
                     modifier = Modifier.testTag("tab_mode_voice")
                 )
                 Tab(
@@ -138,23 +190,23 @@ fun VoiceRecognitionSheet(
                         onStopListening()
                     },
                     icon = { Icon(imageVector = Icons.Default.Keyboard, contentDescription = null) },
-                    text = { Text("Текстовый ввод", fontWeight = FontWeight.SemiBold) },
+                    text = { Text("Текст", fontWeight = FontWeight.SemiBold) },
                     modifier = Modifier.testTag("tab_mode_text")
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             if (selectedInputTab == 0) {
-                // Voice mode header
+                // Voice mode section
                 Text(
-                    text = "Продиктуйте задачу или заметку голосом",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Произнесите задачу, заметку или команду приложения",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Animated Pulsing Mic Visualizer
                 VoiceWaveformVisualizer(
@@ -166,13 +218,13 @@ fun VoiceRecognitionSheet(
                     }
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Voice status messages
                 when (voiceState) {
                     is VoiceState.Initializing -> {
                         Text(
-                            text = "Подготовка микрофона...",
+                            text = "Подготовка микрофона (русский язык)...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium
@@ -191,48 +243,87 @@ fun VoiceRecognitionSheet(
                         )
                     }
                     is VoiceState.Error -> {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
                             Text(
                                 text = voiceState.message,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error,
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            OutlinedButton(
-                                onClick = onStartListening,
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
-                                modifier = Modifier.testTag("voice_retry_button")
-                            ) {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Попробовать снова")
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = onStartListening,
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.testTag("voice_retry_button")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Повторить")
+                                }
+
+                                if (voiceState.canFallbackToSystem) {
+                                    Button(
+                                        onClick = onLaunchSystemSpeech,
+                                        modifier = Modifier.testTag("system_speech_fallback_button")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Системный Google ввод")
+                                    }
+                                }
                             }
                         }
                     }
                     else -> Unit
                 }
+
+                // Google Native Speech Recognition Button (Direct 100% Reliable Access)
+                Spacer(modifier = Modifier.height(8.dp))
+                FilledTonalButton(
+                    onClick = onLaunchSystemSpeech,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("google_system_speech_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RecordVoiceOver,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Системный микрофон Google (100% точность)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
             } else {
-                // Text mode header
+                // Text mode description
                 Text(
-                    text = "Введите текст на естественном языке, система автоматически определит время, дату и категорию",
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Введите текст задачи или команду (например: «Задачи на завтра» или «В пятницу в 18:00 тренировка»)",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Editable Text Area (available for both text input mode and editing recognized voice)
+            // Editable Text Area
             OutlinedTextField(
                 value = manualInputText,
                 onValueChange = {
                     manualInputText = it
                     onTextChanged(it)
                 },
-                label = { Text("Текст (можно редактировать)") },
-                placeholder = { Text("Например: Завтра в 15:00 встреча с коллегами срочно") },
+                label = { Text("Распознанный текст или команда") },
+                placeholder = { Text("Например: «Открой заметки», «Задачи на завтра»") },
                 minLines = 2,
                 maxLines = 4,
                 modifier = Modifier
@@ -251,29 +342,133 @@ fun VoiceRecognitionSheet(
                 }
             )
 
-            // Parsed Result Card
+            // Voice Command Banner (if recognized as a command)
+            if (detectedCommand != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("detected_voice_command_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = detectedCommand.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    text = detectedCommand.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = onExecuteCommand,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("execute_command_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Выполнить", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Quick Voice Command Chips
+            Spacer(modifier = Modifier.height(10.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Быстрые команды управления:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val sampleCommands = listOf(
+                        "Задачи на завтра",
+                        "Открой заметки",
+                        "Покажи сегодня",
+                        "Фильтр: В работе",
+                        "Справка"
+                    )
+                    sampleCommands.forEach { cmd ->
+                        AssistChip(
+                            onClick = {
+                                manualInputText = cmd
+                                onTextChanged(cmd)
+                            },
+                            label = { Text(cmd, fontSize = 11.sp) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            ),
+                            border = null,
+                            modifier = Modifier.height(28.dp)
+                        )
+                    }
+                }
+            }
+
+            // Parsed Result Card (Date, Time, Category)
             val effectiveResult = parsedResult ?: if (manualInputText.isNotBlank()) SmartVoiceParser.parse(manualInputText) else null
 
-            if (effectiveResult != null && effectiveResult.rawText.isNotBlank()) {
+            if (effectiveResult != null && effectiveResult.rawText.isNotBlank() && detectedCommand == null) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Card(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp)
+                            .padding(12.dp)
                     ) {
                         Text(
-                            text = "Распознанные параметры:",
+                            text = "Распознанные параметры задачи:",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         // Parsed Tag Chips
                         Row(
@@ -281,7 +476,7 @@ fun VoiceRecognitionSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Suggested Date
+                            // Date
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -304,7 +499,7 @@ fun VoiceRecognitionSheet(
                                 )
                             }
 
-                            // Suggested Time
+                            // Time
                             if (effectiveResult.suggestedTimeString.isNotBlank()) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -329,7 +524,7 @@ fun VoiceRecognitionSheet(
                                 }
                             }
 
-                            // Suggested Category
+                            // Category
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -354,7 +549,7 @@ fun VoiceRecognitionSheet(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // Actions: Save as Task OR Note
                 Row(
@@ -389,6 +584,37 @@ fun VoiceRecognitionSheet(
                 }
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Setting: Auto-execute commands switch
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onToggleAutoExecute() }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Автовыполнение команд голосом",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Мгновенное выполнение при совпадении команды",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = autoExecuteCommands,
+                    onCheckedChange = { onToggleAutoExecute() },
+                    modifier = Modifier.testTag("auto_execute_switch")
+                )
+            }
+
             Spacer(modifier = Modifier.height(20.dp))
         }
     }
@@ -415,8 +641,7 @@ fun VoiceWaveformVisualizer(
     val dbScale = if (isListening) (1f + (rmsDb.coerceIn(0f, 15f) / 25f)) else 1f
 
     Box(
-        modifier = modifier
-            .size(90.dp),
+        modifier = modifier.size(90.dp),
         contentAlignment = Alignment.Center
     ) {
         // Outer pulsing halo

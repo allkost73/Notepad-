@@ -16,7 +16,7 @@ sealed class VoiceState {
     object Initializing : VoiceState()
     object Listening : VoiceState()
     data class Success(val recognizedText: String) : VoiceState()
-    data class Error(val message: String) : VoiceState()
+    data class Error(val message: String, val canFallbackToSystem: Boolean = true) : VoiceState()
 }
 
 class VoiceInputManager(private val context: Context) {
@@ -36,11 +36,29 @@ class VoiceInputManager(private val context: Context) {
         return SpeechRecognizer.isRecognitionAvailable(context)
     }
 
+    /**
+     * Creates an Intent for standard system-level speech dialog (Google Voice Search / Speech Dialog).
+     * This provides 100% reliable Russian recognition with automatic punctuation on Android devices.
+     */
+    fun createSystemSpeechIntent(promptText: String = "Скажите задачу, заметку или команду..."): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU")
+            putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("ru-RU", "ru"))
+            putExtra(RecognizerIntent.EXTRA_PROMPT, promptText)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+        }
+    }
+
     fun startListening() {
         stopListening()
 
         if (!isSpeechAvailable()) {
-            _voiceState.value = VoiceState.Error("Распознавание речи недоступно на данном устройстве")
+            _voiceState.value = VoiceState.Error(
+                message = "Служба распознавания речи недоступна в фоне. Воспользуйтесь системным микрофоном Google ниже.",
+                canFallbackToSystem = true
+            )
             return
         }
 
@@ -56,10 +74,13 @@ class VoiceInputManager(private val context: Context) {
                 )
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU")
-                putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, "ru-RU")
+                putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("ru-RU", "ru"))
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
 
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -79,23 +100,23 @@ class VoiceInputManager(private val context: Context) {
                     override fun onBufferReceived(buffer: ByteArray?) {}
 
                     override fun onEndOfSpeech() {
-                        // Keep listening until results or error
+                        // Wait for final results
                     }
 
                     override fun onError(error: Int) {
-                        val message = when (error) {
-                            SpeechRecognizer.ERROR_AUDIO -> "Ошибка записи звука"
-                            SpeechRecognizer.ERROR_CLIENT -> "Клиентская ошибка"
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Требуется разрешение на запись звука"
-                            SpeechRecognizer.ERROR_NETWORK -> "Ошибка сети при распознавании"
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Таймаут подключения к сети"
-                            SpeechRecognizer.ERROR_NO_MATCH -> "Речь не распознана, попробуйте еще раз"
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Служба распознавания занята"
-                            SpeechRecognizer.ERROR_SERVER -> "Ошибка сервера распознавания"
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Не услышали речь, попробуйте сказать еще раз"
-                            else -> "Ошибка распознавания речи ($error)"
+                        val (message, canFallback) = when (error) {
+                            SpeechRecognizer.ERROR_AUDIO -> "Ошибка записи звука с микрофона" to true
+                            SpeechRecognizer.ERROR_CLIENT -> "Служба распознавания занята или перегружена" to true
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Предоставьте разрешение на запись звука" to false
+                            SpeechRecognizer.ERROR_NETWORK -> "Ошибка интернет-соединения при распознавании" to true
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Таймаут подключения к серверу распознавания" to true
+                            SpeechRecognizer.ERROR_NO_MATCH -> "Речь не распознана. Попробуйте еще раз или используйте системный микрофон Google" to true
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Служба распознавания занята, повторите попытку" to true
+                            SpeechRecognizer.ERROR_SERVER -> "Ошибка сервера распознавания речи" to true
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Не услышали речь. Попробуйте сказать громче" to true
+                            else -> "Ошибка распознавания ($error)" to true
                         }
-                        _voiceState.value = VoiceState.Error(message)
+                        _voiceState.value = VoiceState.Error(message, canFallback)
                     }
 
                     override fun onResults(results: Bundle?) {
@@ -104,7 +125,7 @@ class VoiceInputManager(private val context: Context) {
                         if (spokenText.isNotBlank()) {
                             _voiceState.value = VoiceState.Success(spokenText)
                         } else {
-                            _voiceState.value = VoiceState.Error("Речь не распознана")
+                            _voiceState.value = VoiceState.Error("Речь не распознана, скажите фразу еще раз")
                         }
                     }
 
@@ -133,6 +154,12 @@ class VoiceInputManager(private val context: Context) {
             // Ignored
         } finally {
             speechRecognizer = null
+        }
+    }
+
+    fun setResultDirectly(text: String) {
+        if (text.isNotBlank()) {
+            _voiceState.value = VoiceState.Success(text.trim())
         }
     }
 

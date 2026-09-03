@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
+import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.EventNote
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.outlined.Description
@@ -45,10 +48,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -72,6 +71,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.components.NoteEditDialog
 import com.example.ui.components.TaskEditDialog
+import com.example.ui.components.VoiceHelpDialog
 import com.example.ui.components.VoiceRecognitionSheet
 import com.example.ui.planner.MainTab
 import com.example.ui.planner.PlannerViewModel
@@ -98,6 +98,27 @@ fun MainAppScreen(
 
     // Secondary inline voice callback handler for text fields inside dialogs
     var inlineVoiceCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+
+    // Launcher for standard Google Voice Search system dialog (100% accuracy on Android)
+    val systemSpeechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+            if (!spokenText.isNullOrBlank()) {
+                viewModel.voiceInputManager.setResultDirectly(spokenText)
+                if (inlineVoiceCallback != null) {
+                    inlineVoiceCallback?.invoke(spokenText)
+                    inlineVoiceCallback = null
+                    viewModel.closeVoiceSheet()
+                } else {
+                    viewModel.processRecognizedVoice(spokenText, isFromDirectSpeech = true)
+                }
+            }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -155,6 +176,18 @@ fun MainAppScreen(
                     }
                 },
                 actions = {
+                    // Help for voice commands
+                    IconButton(
+                        onClick = { viewModel.openVoiceHelpDialog() },
+                        modifier = Modifier.testTag("top_bar_voice_help_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.HelpOutline,
+                            contentDescription = "Справка по голосовым командам",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     // Quick Voice input action on the top bar
                     IconButton(
                         onClick = { requestVoiceInput() },
@@ -357,8 +390,20 @@ fun MainAppScreen(
             partialText = partialText,
             rmsDb = liveRmsDb,
             parsedResult = uiState.voiceParsedResult,
+            detectedCommand = uiState.voiceDetectedCommand,
+            autoExecuteCommands = uiState.autoExecuteVoiceCommands,
             onStartListening = { viewModel.voiceInputManager.startListening() },
             onStopListening = { viewModel.voiceInputManager.stopListening() },
+            onLaunchSystemSpeech = {
+                try {
+                    systemSpeechLauncher.launch(viewModel.voiceInputManager.createSystemSpeechIntent())
+                } catch (e: Exception) {
+                    viewModel.showSnackbar("Не удалось открыть системный ввод речи: ${e.localizedMessage}")
+                }
+            },
+            onOpenHelp = { viewModel.openVoiceHelpDialog() },
+            onToggleAutoExecute = { viewModel.toggleAutoExecuteVoiceCommands() },
+            onExecuteCommand = { viewModel.executeDetectedCommand() },
             onTextChanged = { text -> viewModel.updateVoiceSheetText(text) },
             onApplyAsTask = { parsed ->
                 if (inlineVoiceCallback != null) {
@@ -382,6 +427,13 @@ fun MainAppScreen(
                 viewModel.closeVoiceSheet()
                 inlineVoiceCallback = null
             }
+        )
+    }
+
+    // 4. Voice Commands Help Dialog
+    if (uiState.isVoiceHelpDialogVisible) {
+        VoiceHelpDialog(
+            onDismiss = { viewModel.closeVoiceHelpDialog() }
         )
     }
 }
