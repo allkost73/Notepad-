@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
@@ -65,6 +66,7 @@ fun NotebookScreen(
     onDeleteNote: (Note) -> Unit,
     onAddNote: () -> Unit,
     onQuickAddTextNote: (String) -> Unit,
+    onOpenVoice: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var quickNoteText by remember { mutableStateOf("") }
@@ -127,30 +129,43 @@ fun NotebookScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                IconButton(
-                    onClick = {
-                        if (quickNoteText.isNotBlank()) {
-                            onQuickAddTextNote(quickNoteText)
-                            quickNoteText = ""
-                        } else {
-                            onAddNote()
-                        }
-                    },
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (quickNoteText.isNotBlank()) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.primaryContainer
+                if (quickNoteText.isNotBlank()) {
+                    IconButton(
+                        onClick = {
+                            if (quickNoteText.isNotBlank()) {
+                                onQuickAddTextNote(quickNoteText)
+                                quickNoteText = ""
+                            }
+                        },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .testTag("notebook_quick_submit_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Сохранить заметку",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(18.dp)
                         )
-                        .testTag("notebook_quick_submit_button")
-                ) {
-                    Icon(
-                        imageVector = if (quickNoteText.isNotBlank()) Icons.Default.Send else Icons.Default.Add,
-                        contentDescription = "Сохранить заметку",
-                        tint = if (quickNoteText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onOpenVoice,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .testTag("notebook_quick_mic_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Голосовой ввод заметки",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

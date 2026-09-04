@@ -130,6 +130,16 @@ fun MainAppScreen(
         }
     }
 
+    fun launchDirectVoiceRecognition(customCallback: ((String) -> Unit)? = null) {
+        inlineVoiceCallback = customCallback
+        try {
+            val speechIntent = viewModel.voiceInputManager.createSystemSpeechIntent()
+            systemSpeechLauncher.launch(speechIntent)
+        } catch (e: Exception) {
+            viewModel.showSnackbar("Системный ввод речи недоступен: ${e.localizedMessage}")
+        }
+    }
+
     fun requestVoiceInput(customCallback: ((String) -> Unit)? = null) {
         inlineVoiceCallback = customCallback
         val hasPermission = ContextCompat.checkSelfPermission(
@@ -328,7 +338,8 @@ fun MainAppScreen(
                         onEditNote = { viewModel.openEditNoteDialog(it) },
                         onDeleteNote = { viewModel.deleteNote(it) },
                         onAddNote = { viewModel.openAddNoteDialog() },
-                        onQuickAddTextNote = { text -> viewModel.quickAddNoteFromText(text) }
+                        onQuickAddTextNote = { text -> viewModel.quickAddNoteFromText(text) },
+                        onOpenVoice = { requestVoiceInput() }
                     )
                 }
             }

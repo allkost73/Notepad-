@@ -1,11 +1,14 @@
 package com.example.voice
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,7 +36,35 @@ class VoiceInputManager(private val context: Context) {
     val partialText: StateFlow<String> = _partialText.asStateFlow()
 
     fun isSpeechAvailable(): Boolean {
-        return SpeechRecognizer.isRecognitionAvailable(context)
+        val standardCheck = SpeechRecognizer.isRecognitionAvailable(context)
+        if (standardCheck) return true
+
+        // Fallback package manager check for recognition service or Google speech intent
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+        val activities = context.packageManager.queryIntentActivities(intent, 0)
+        return activities.isNotEmpty()
+    }
+
+    /**
+     * Finds the best SpeechRecognizer ComponentName on the device (e.g. Google speech service)
+     * if default createSpeechRecognizer fails or is unavailable.
+     */
+    private fun findSpeechServiceComponent(): ComponentName? {
+        val serviceIntent = Intent("android.speech.RecognitionService")
+        val services = context.packageManager.queryIntentServices(serviceIntent, 0)
+        
+        // Prioritize Google recognition service if installed
+        val googleService = services.firstOrNull { 
+            it.serviceInfo.packageName.contains("google", ignoreCase = true) 
+        }
+        if (googleService != null) {
+            return ComponentName(googleService.serviceInfo.packageName, googleService.serviceInfo.name)
+        }
+        val firstService = services.firstOrNull()
+        if (firstService != null) {
+            return ComponentName(firstService.serviceInfo.packageName, firstService.serviceInfo.name)
+        }
+        return null
     }
 
     /**
@@ -54,18 +85,28 @@ class VoiceInputManager(private val context: Context) {
     fun startListening() {
         stopListening()
 
-        if (!isSpeechAvailable()) {
-            _voiceState.value = VoiceState.Error(
-                message = "Служба распознавания речи недоступна в фоне. Воспользуйтесь системным микрофоном Google ниже.",
-                canFallbackToSystem = true
-            )
-            return
-        }
-
         try {
             _voiceState.value = VoiceState.Initializing
             _partialText.value = ""
             _liveRmsDb.value = 0f
+
+            val recognizer: SpeechRecognizer = try {
+                val serviceComponent = findSpeechServiceComponent()
+                if (serviceComponent != null) {
+                    SpeechRecognizer.createSpeechRecognizer(context, serviceComponent)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }
+            } catch (e: Exception) {
+                Log.w("VoiceInputManager", "createSpeechRecognizer failed", e)
+                _voiceState.value = VoiceState.Error(
+                    message = "Встроенная служба распознавания недоступна. Нажмите «Системный микрофон Google» ниже.",
+                    canFallbackToSystem = true
+                )
+                return
+            }
+
+            speechRecognizer = recognizer
 
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(
@@ -83,66 +124,84 @@ class VoiceInputManager(private val context: Context) {
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
 
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        _voiceState.value = VoiceState.Listening
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    _voiceState.value = VoiceState.Listening
+                }
+
+                override fun onBeginningOfSpeech() {
+                    _voiceState.value = VoiceState.Listening
+                }
+
+                override fun onRmsChanged(rmsdB: Float) {
+                    _liveRmsDb.value = rmsdB
+                }
+
+                override fun onBufferReceived(buffer: ByteArray?) {}
+
+                override fun onEndOfSpeech() {
+                    // Wait for final results
+                }
+
+                override fun onError(error: Int) {
+                    Log.d("VoiceInputManager", "SpeechRecognizer error: $error")
+                    val (message, canFallback) = when (error) {
+                        SpeechRecognizer.ERROR_AUDIO -> 
+                            "Ошибка звука с микрофона. Проверьте микрофон устройства" to true
+                        SpeechRecognizer.ERROR_CLIENT -> 
+                            "Служба распознавания занята. Нажмите кнопку «Системный микрофон Google» ниже" to true
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> 
+                            "Не предоставлен доступ к микрофону. Разрешите запись звука в настройках" to false
+                        SpeechRecognizer.ERROR_NETWORK -> 
+                            "Ошибка сети при распознавании. Проверьте интернет или нажмите «Системный микрофон Google»" to true
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 
+                            "Таймаут подключения к серверу речи. Нажмите «Системный микрофон Google»" to true
+                        SpeechRecognizer.ERROR_NO_MATCH -> 
+                            "Речь не распознана. Нажмите «Повторить» или используйте «Системный микрофон Google»" to true
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 
+                            "Служба распознавания занята, попробуйте еще раз" to true
+                        SpeechRecognizer.ERROR_SERVER -> 
+                            "Ошибка сервера речи. Нажмите «Системный микрофон Google»" to true
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 
+                            "Голос не обнаружен. Нажмите микрофон и говорите громче" to true
+                        else -> 
+                            "Ошибка голосовой службы ($error). Воспользуйтесь кнопкой «Системный микрофон Google»" to true
                     }
+                    _voiceState.value = VoiceState.Error(message, canFallback)
+                }
 
-                    override fun onBeginningOfSpeech() {
-                        _voiceState.value = VoiceState.Listening
+                override fun onResults(results: Bundle?) {
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val spokenText = matches?.firstOrNull()?.trim() ?: _partialText.value
+                    if (spokenText.isNotBlank()) {
+                        _voiceState.value = VoiceState.Success(spokenText)
+                    } else {
+                        _voiceState.value = VoiceState.Error(
+                            "Речь не распознана. Нажмите «Повторить» или «Системный микрофон Google»",
+                            canFallbackToSystem = true
+                        )
                     }
+                }
 
-                    override fun onRmsChanged(rmsdB: Float) {
-                        _liveRmsDb.value = rmsdB
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val spokenText = matches?.firstOrNull() ?: ""
+                    if (spokenText.isNotBlank()) {
+                        _partialText.value = spokenText
                     }
+                }
 
-                    override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
 
-                    override fun onEndOfSpeech() {
-                        // Wait for final results
-                    }
+            recognizer.startListening(intent)
 
-                    override fun onError(error: Int) {
-                        val (message, canFallback) = when (error) {
-                            SpeechRecognizer.ERROR_AUDIO -> "Ошибка записи звука с микрофона" to true
-                            SpeechRecognizer.ERROR_CLIENT -> "Служба распознавания занята или перегружена" to true
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Предоставьте разрешение на запись звука" to false
-                            SpeechRecognizer.ERROR_NETWORK -> "Ошибка интернет-соединения при распознавании" to true
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Таймаут подключения к серверу распознавания" to true
-                            SpeechRecognizer.ERROR_NO_MATCH -> "Речь не распознана. Попробуйте еще раз или используйте системный микрофон Google" to true
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Служба распознавания занята, повторите попытку" to true
-                            SpeechRecognizer.ERROR_SERVER -> "Ошибка сервера распознавания речи" to true
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Не услышали речь. Попробуйте сказать громче" to true
-                            else -> "Ошибка распознавания ($error)" to true
-                        }
-                        _voiceState.value = VoiceState.Error(message, canFallback)
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val spokenText = matches?.firstOrNull()?.trim() ?: _partialText.value
-                        if (spokenText.isNotBlank()) {
-                            _voiceState.value = VoiceState.Success(spokenText)
-                        } else {
-                            _voiceState.value = VoiceState.Error("Речь не распознана, скажите фразу еще раз")
-                        }
-                    }
-
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val spokenText = matches?.firstOrNull() ?: ""
-                        if (spokenText.isNotBlank()) {
-                            _partialText.value = spokenText
-                        }
-                    }
-
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-                startListening(intent)
-            }
         } catch (e: Exception) {
-            _voiceState.value = VoiceState.Error("Не удалось запустить распознавание: ${e.localizedMessage}")
+            Log.e("VoiceInputManager", "startListening exception", e)
+            _voiceState.value = VoiceState.Error(
+                "Не удалось запустить микрофон: ${e.localizedMessage}. Воспользуйтесь кнопкой «Системный микрофон Google».",
+                canFallbackToSystem = true
+            )
         }
     }
 
