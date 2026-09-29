@@ -102,6 +102,21 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         )
 
     init {
+        // Fix starter tasks if they were seeded on yesterday's date
+        viewModelScope.launch {
+            val today = DateUtils.getTodayEpochDay()
+            val yesterday = today - 1
+            val todayTasks = repository.getTasksForDateSync(today)
+            if (todayTasks.isEmpty()) {
+                val yesterdayTasks = repository.getTasksForDateSync(yesterday)
+                for (task in yesterdayTasks) {
+                    if (task.id <= 4) {
+                        repository.updateTask(task.copy(dateEpochDay = today))
+                    }
+                }
+            }
+        }
+
         // Collect voice recognition results and auto-parse
         viewModelScope.launch {
             voiceInputManager.voiceState.collect { state ->
@@ -109,6 +124,13 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
                     processRecognizedVoice(state.recognizedText, isFromDirectSpeech = true)
                 }
             }
+        }
+    }
+
+    fun onAppResumed() {
+        val today = DateUtils.getTodayEpochDay()
+        if (DateUtils.isYesterday(_selectedEpochDay.value)) {
+            selectDate(today)
         }
     }
 

@@ -52,8 +52,8 @@ fun CalendarStrip(
     onDateSelected: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val todayEpochDay = remember { DateUtils.getTodayEpochDay() }
-    val daysRange = remember {
+    val todayEpochDay = DateUtils.getTodayEpochDay()
+    val daysRange = remember(todayEpochDay) {
         (-14..30).map { offset -> todayEpochDay + offset }
     }
     val listState = rememberLazyListState()

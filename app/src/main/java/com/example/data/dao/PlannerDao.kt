@@ -17,6 +17,9 @@ interface PlannerDao {
     @Query("SELECT * FROM daily_tasks WHERE dateEpochDay = :epochDay ORDER BY isCompleted ASC, priority DESC, id DESC")
     fun getTasksForDate(epochDay: Long): Flow<List<DailyTask>>
 
+    @Query("SELECT * FROM daily_tasks WHERE dateEpochDay = :epochDay ORDER BY isCompleted ASC, priority DESC, id DESC")
+    suspend fun getTasksForDateSync(epochDay: Long): List<DailyTask>
+
     @Query("SELECT * FROM daily_tasks ORDER BY dateEpochDay ASC, isCompleted ASC, priority DESC")
     fun getAllTasks(): Flow<List<DailyTask>>
 

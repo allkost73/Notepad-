@@ -68,7 +68,7 @@ fun TaskEditDialog(
     var category by remember { mutableStateOf(initialTask?.category ?: TaskCategory.WORK) }
 
     val isEditing = initialTask != null
-    val todayEpoch = remember { DateUtils.getTodayEpochDay() }
+    val todayEpoch = DateUtils.getTodayEpochDay()
 
     AlertDialog(
         onDismissRequest = onDismiss,

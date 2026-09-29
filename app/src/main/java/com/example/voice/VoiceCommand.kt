@@ -130,7 +130,7 @@ object VoiceCommandParser {
         for ((synonyms, calDay) in weekdays) {
             for (syn in synonyms) {
                 if (lower == syn || lower == "задачи на $syn" || lower == "покажи $syn" || lower == "план на $syn") {
-                    val epoch = getNextWeekdayEpochDay(calDay)
+                    val epoch = DateUtils.getNextWeekdayEpochDay(calDay)
                     val label = DateUtils.formatFullDateWithWeekday(epoch)
                     return VoiceCommandDetection(
                         command = VoiceCommand.SelectDate(epoch, label),
@@ -139,6 +139,37 @@ object VoiceCommandParser {
                     )
                 }
             }
+        }
+
+        // Specific calendar date navigation (e.g. "покажи 29 сентября", "задачи на 30 сентября")
+        val dateMonthPattern = java.util.regex.Pattern.compile("(?i)^(?:покажи\\s+|перейди\\s+на\\s+|план\\s+на\\s+|задачи\\s+на\\s+)?([1-9]|[12][0-9]|3[01])\\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)$")
+        val dateMatcher = dateMonthPattern.matcher(lower)
+        if (dateMatcher.find()) {
+            val day = dateMatcher.group(1)?.toIntOrNull() ?: 1
+            val monthStr = dateMatcher.group(2)?.lowercase() ?: ""
+            val monthIndex = when (monthStr) {
+                "января" -> 0
+                "февраля" -> 1
+                "марта" -> 2
+                "апреля" -> 3
+                "мая" -> 4
+                "июня" -> 5
+                "июля" -> 6
+                "августа" -> 7
+                "сентября" -> 8
+                "октября" -> 9
+                "ноября" -> 10
+                "декабря" -> 11
+                else -> 0
+            }
+            val currentYear = DateUtils.getCurrentYear()
+            val epoch = DateUtils.createEpochDay(currentYear, monthIndex, day)
+            val label = DateUtils.formatFullDateWithWeekday(epoch)
+            return VoiceCommandDetection(
+                command = VoiceCommand.SelectDate(epoch, label),
+                title = "Перейти на $day $monthStr",
+                description = "Показать задачи на $label"
+            )
         }
 
         // 4. Task Filters (Все, В работе, Выполненные)
@@ -272,18 +303,5 @@ object VoiceCommandParser {
 
     private fun matchesAny(text: String, patterns: List<String>): Boolean {
         return patterns.any { p -> text == p || text.startsWith("$p ") }
-    }
-
-    private fun getNextWeekdayEpochDay(targetCalDay: Int): Long {
-        val cal = Calendar.getInstance()
-        val currentCalDay = cal.get(Calendar.DAY_OF_WEEK)
-        var daysUntil = (targetCalDay - currentCalDay + 7) % 7
-        if (daysUntil == 0) daysUntil = 7
-        cal.add(Calendar.DAY_OF_YEAR, daysUntil)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis / (24 * 60 * 60 * 1000L)
     }
 }

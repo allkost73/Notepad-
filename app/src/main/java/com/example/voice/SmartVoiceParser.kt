@@ -84,34 +84,61 @@ object SmartVoiceParser {
             targetEpochDay = DateUtils.getTodayEpochDay() - 1
             workingText = workingText.replace(Regex("(?i)\\bвчера\\b"), "").trim()
         } else if (lower.contains("на выходных") || lower.contains("в выходные")) {
-            targetEpochDay = getNextWeekdayEpochDay(Calendar.SATURDAY)
+            targetEpochDay = DateUtils.getNextWeekdayEpochDay(Calendar.SATURDAY)
             workingText = workingText.replace(Regex("(?i)\\b(на выходных|в выходные)\\b"), "").trim()
             isTask = true
         }
 
-        // Check for days of the week in Russian
-        val weekdays = listOf(
-            listOf("в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"),
-            listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
-        )
-        val calDays = listOf(
-            Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY,
-            Calendar.THURSDAY, Calendar.FRIDAY, Calendar.SATURDAY, Calendar.SUNDAY
-        )
+        // Check for specific date in Russian (e.g. "29 сентября", "на 15 октября")
+        val dateMonthPattern = Pattern.compile("(?i)\\b(?:на\\s+)?([1-9]|[12][0-9]|3[01])\\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\\b")
+        val dateMatcher = dateMonthPattern.matcher(workingText)
+        if (dateMatcher.find()) {
+            val day = dateMatcher.group(1)?.toIntOrNull() ?: 1
+            val monthStr = dateMatcher.group(2)?.lowercase() ?: ""
+            val monthIndex = when (monthStr) {
+                "января" -> 0
+                "февраля" -> 1
+                "марта" -> 2
+                "апреля" -> 3
+                "мая" -> 4
+                "июня" -> 5
+                "июля" -> 6
+                "августа" -> 7
+                "сентября" -> 8
+                "октября" -> 9
+                "ноября" -> 10
+                "декабря" -> 11
+                else -> 0
+            }
+            val currentYear = DateUtils.getCurrentYear()
+            targetEpochDay = DateUtils.createEpochDay(currentYear, monthIndex, day)
+            workingText = dateMatcher.replaceFirst("").trim()
+            isTask = true
+        } else {
+            // Check for days of the week in Russian
+            val weekdays = listOf(
+                listOf("в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"),
+                listOf("понедельник", "вторник", "среду", "четверг", "пятницу", "субботу", "воскресенье")
+            )
+            val calDays = listOf(
+                Calendar.MONDAY, Calendar.TUESDAY, Calendar.WEDNESDAY,
+                Calendar.THURSDAY, Calendar.FRIDAY, Calendar.SATURDAY, Calendar.SUNDAY
+            )
 
-        for (i in calDays.indices) {
-            val phraseWithPreposition = weekdays[0][i]
-            val phraseWithoutPreposition = weekdays[1][i]
-            if (workingText.contains(Regex("(?i)\\b$phraseWithPreposition\\b"))) {
-                workingText = workingText.replace(Regex("(?i)\\b$phraseWithPreposition\\b"), "").trim()
-                targetEpochDay = getNextWeekdayEpochDay(calDays[i])
-                isTask = true
-                break
-            } else if (workingText.contains(Regex("(?i)\\b$phraseWithoutPreposition\\b"))) {
-                workingText = workingText.replace(Regex("(?i)\\b$phraseWithoutPreposition\\b"), "").trim()
-                targetEpochDay = getNextWeekdayEpochDay(calDays[i])
-                isTask = true
-                break
+            for (i in calDays.indices) {
+                val phraseWithPreposition = weekdays[0][i]
+                val phraseWithoutPreposition = weekdays[1][i]
+                if (workingText.contains(Regex("(?i)\\b$phraseWithPreposition\\b"))) {
+                    workingText = workingText.replace(Regex("(?i)\\b$phraseWithPreposition\\b"), "").trim()
+                    targetEpochDay = DateUtils.getNextWeekdayEpochDay(calDays[i])
+                    isTask = true
+                    break
+                } else if (workingText.contains(Regex("(?i)\\b$phraseWithoutPreposition\\b"))) {
+                    workingText = workingText.replace(Regex("(?i)\\b$phraseWithoutPreposition\\b"), "").trim()
+                    targetEpochDay = DateUtils.getNextWeekdayEpochDay(calDays[i])
+                    isTask = true
+                    break
+                }
             }
         }
 
@@ -221,18 +248,5 @@ object SmartVoiceParser {
             suggestedCategory = category,
             isSuggestedAsTask = isTask
         )
-    }
-
-    private fun getNextWeekdayEpochDay(targetCalDay: Int): Long {
-        val cal = Calendar.getInstance()
-        val currentCalDay = cal.get(Calendar.DAY_OF_WEEK)
-        var daysUntil = (targetCalDay - currentCalDay + 7) % 7
-        if (daysUntil == 0) daysUntil = 7
-        cal.add(Calendar.DAY_OF_YEAR, daysUntil)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis / (24 * 60 * 60 * 1000L)
     }
 }

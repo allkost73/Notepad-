@@ -10,6 +10,8 @@ class PlannerRepository(private val dao: PlannerDao) {
     // --- Tasks ---
     fun getTasksForDate(epochDay: Long): Flow<List<DailyTask>> = dao.getTasksForDate(epochDay)
 
+    suspend fun getTasksForDateSync(epochDay: Long): List<DailyTask> = dao.getTasksForDateSync(epochDay)
+
     fun getAllTasks(): Flow<List<DailyTask>> = dao.getAllTasks()
 
     fun getDatesWithActiveTasks(): Flow<List<Long>> = dao.getDatesWithActiveTasks()
